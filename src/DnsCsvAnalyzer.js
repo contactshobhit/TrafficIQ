@@ -1,4 +1,7 @@
 import React, { useRef, useState } from 'react';
+import SummaryCards from './components/SummaryCards';
+import AggregatedTable from './components/AggregatedTable';
+import EditFiltersModal from './components/EditFiltersModal';
 
 // Helper functions from the HTML reference
 function splitList(text) {
@@ -57,6 +60,10 @@ export default function DnsCsvAnalyzer() {
   const [agg, setAgg] = useState([]);
   const [preview, setPreview] = useState([]);
   const [search, setSearch] = useState('');
+  const [tableSearch, setTableSearch] = useState('');
+  const [sortCol, setSortCol] = useState('count');
+  const [sortDir, setSortDir] = useState('desc');
+  const [activeBox, setActiveBox] = useState('');
   const [prefs, setPrefs] = useState(DEFAULTS);
   const [showModal, setShowModal] = useState(false);
   const [editPrefs, setEditPrefs] = useState({ ...DEFAULTS });
@@ -80,7 +87,11 @@ export default function DnsCsvAnalyzer() {
     const header = lines[0].split(',');
     const hostIdx = header.findIndex(h => h.toLowerCase().includes('domain') || h.toLowerCase().includes('hostname'));
     const urlIdx = header.findIndex(h => h.toLowerCase().includes('url'));
-    const countIdx = header.findIndex(h => h.toLowerCase().includes('count'));
+    // Find the column for traffic/count: prefer 'count', else 'total'
+    let countIdx = header.findIndex(h => h.toLowerCase().includes('count'));
+    if (countIdx === -1) {
+      countIdx = header.findIndex(h => h.toLowerCase().includes('total'));
+    }
     const data = lines.slice(1).map(line => {
       const cols = line.split(',');
       const raw = cols[urlIdx] || cols[hostIdx] || '';
@@ -113,7 +124,20 @@ export default function DnsCsvAnalyzer() {
   }
 
   // Filtering
-  const filteredAgg = agg.filter(r => !search || r.reg.includes(search) || r.host.includes(search));
+  let filteredAgg = agg;
+  if (activeBox === 'phishing') filteredAgg = filteredAgg.filter(r => r.cat === 'phishing');
+  else if (activeBox === 'adult') filteredAgg = filteredAgg.filter(r => r.cat === 'adult');
+  else if (activeBox === 'user') filteredAgg = filteredAgg.filter(r => r.cat === 'user');
+  else if (activeBox === 'all') filteredAgg = agg;
+  filteredAgg = filteredAgg.filter(r => (!search || r.reg.includes(search) || r.host.includes(search)) && (!tableSearch || r.reg.toLowerCase().includes(tableSearch.toLowerCase()) || r.host.toLowerCase().includes(tableSearch.toLowerCase()) || r.cat.toLowerCase().includes(tableSearch.toLowerCase())));
+  // Sort
+  filteredAgg = [...filteredAgg].sort((a, b) => {
+    let vA = a[sortCol], vB = b[sortCol];
+    if (sortCol === 'count') { vA = +vA; vB = +vB; }
+    if (vA < vB) return sortDir === 'asc' ? -1 : 1;
+    if (vA > vB) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
   const filteredPreview = preview.filter(r => !search || r.reg.includes(search) || r.host.includes(search));
 
   // Export visible CSV
@@ -139,9 +163,11 @@ export default function DnsCsvAnalyzer() {
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: '28px auto', padding: 20 }}>
-      <h2>DNS Log Analyzer</h2>
-      <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 18 }}>
+    <div style={{ maxWidth: '95%', margin: '28px auto', padding: 20, fontFamily: 'Roboto, Open Sans, Arial, sans-serif', background: '#f3f6fa', borderRadius: 18, boxShadow: '0 4px 32px rgba(37,99,235,0.07)' }}>
+      <div className="header" style={{ width: '100%', padding: '0 15px' }}>
+        <h2 style={{ margin: 0 }}>DNS Log Analyzer</h2>
+      </div>
+      <div className="filter-bar" style={{ width: '100%', padding: '0 15px', display: 'flex', gap: 16, alignItems: 'center', marginBottom: 18, marginTop: 12 }}>
         <label style={{ background: '#fff', border: '1px dashed #ccc', borderRadius: 8, padding: '10px 14px', cursor: 'pointer' }}>
           📁 Upload DNS CSV
           <input type="file" accept=".csv" style={{ display: 'none' }} ref={fileInput} onChange={handleFile} />
@@ -178,125 +204,42 @@ export default function DnsCsvAnalyzer() {
           ⚙️ Edit Filters
         </button>
       </div>
-            {/* Edit Filters Modal */}
-            {showModal && (
-              <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-                <div style={{ width: 480, background: 'white', borderRadius: 10, padding: 24, boxShadow: '0 18px 60px rgba(2,6,23,0.2)' }}>
-                  <h3>Edit Filters & Mappings</h3>
-                  <p style={{ color: '#888', fontSize: 13 }}>Modify the keyword lists and TLDs. Changes are applied immediately.</p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#888' }}>Phishing Keywords (comma separated)</label>
-                      <textarea value={editPrefs.phishKeys} onChange={e => setEditPrefs({ ...editPrefs, phishKeys: e.target.value })} style={{ width: '100%', height: 48, marginBottom: 8 }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#888' }}>Phishing High-Risk TLDs (comma separated)</label>
-                      <textarea value={editPrefs.phishTlds} onChange={e => setEditPrefs({ ...editPrefs, phishTlds: e.target.value })} style={{ width: '100%', height: 48, marginBottom: 8 }} />
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#888' }}>Adult Keywords (comma separated)</label>
-                      <textarea value={editPrefs.adultKeys} onChange={e => setEditPrefs({ ...editPrefs, adultKeys: e.target.value })} style={{ width: '100%', height: 48, marginBottom: 8 }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#888' }}>Adult TLDs (comma separated)</label>
-                      <textarea value={editPrefs.adultTlds} onChange={e => setEditPrefs({ ...editPrefs, adultTlds: e.target.value })} style={{ width: '100%', height: 48, marginBottom: 8 }} />
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 12 }}>
-                    <label style={{ fontSize: 12, color: '#888' }}>Infrastructure / CDN patterns (comma separated)</label>
-                    <textarea value={editPrefs.infraKeys} onChange={e => setEditPrefs({ ...editPrefs, infraKeys: e.target.value })} style={{ width: '100%', height: 48, marginBottom: 8 }} />
-                  </div>
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                    <button className="btn" style={{ background: '#eef2ff', color: '#2563eb', border: '1px solid #2563eb22', borderRadius: 8, padding: '8px 12px', fontWeight: 500, cursor: 'pointer' }} onClick={() => setShowModal(false)}>Close</button>
-                    <button className="btn" style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, padding: '8px 12px', fontWeight: 500, cursor: 'pointer' }} onClick={() => {
-                      const newPrefs = {
-                        phishKeys: splitList(editPrefs.phishKeys),
-                        phishTlds: splitList(editPrefs.phishTlds),
-                        adultKeys: splitList(editPrefs.adultKeys),
-                        adultTlds: splitList(editPrefs.adultTlds),
-                        infraKeys: splitList(editPrefs.infraKeys),
-                      };
-                      setPrefs(newPrefs);
-                      setShowModal(false);
-                      // Re-parse rows if any
-                      if (rows.length) parseCsv(rows.map(r => [r.raw, r.host, r.reg, r.cat, r.count].join(',')).join('\n'));
-                    }}>Save & Apply</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12, marginBottom: 18 }}>
-        <div style={{ padding: 12, borderRadius: 10, background: '#fff', textAlign: 'center', border: '1px solid #eee' }}>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>TOTAL DOMAINS</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{summary.totalDomains}</div>
-        </div>
-        <div style={{ padding: 12, borderRadius: 10, background: '#fff', textAlign: 'center', border: '1px solid #eee' }}>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>TOTAL REQUESTS</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{summary.totalRequests}</div>
-        </div>
-        <div style={{ padding: 12, borderRadius: 10, background: '#fff', textAlign: 'center', border: '1px solid #eee' }}>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>USER-FACING</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{summary.user}</div>
-        </div>
-        <div style={{ padding: 12, borderRadius: 10, background: '#fff', textAlign: 'center', border: '1px solid #eee' }}>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>PHISHING SUSPECTS</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{summary.phishing}</div>
-        </div>
-        <div style={{ padding: 12, borderRadius: 10, background: '#fff', textAlign: 'center', border: '1px solid #eee' }}>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>ADULT / PORN</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{summary.adult}</div>
-        </div>
-      </div>
+      <SummaryCards summary={summary} activeBox={activeBox} setActiveBox={setActiveBox} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, alignItems: 'start' }}>
-        <div style={{ background: '#fff', borderRadius: 10, padding: 14, border: '1px solid #eee' }}>
-          <h3 style={{ margin: 0 }}>Aggregated Registered Domains</h3>
-          <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>Group by registered domain · sorted by count</div>
-          <div style={{ marginTop: 12, maxHeight: 520, overflow: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th>Registered</th>
-                  <th>Platform</th>
-                  <th>Count</th>
-                  <th>Category</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAgg.map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.reg}</td>
-                    <td>{r.host}</td>
-                    <td>{r.count}</td>
-                    <td>{r.cat}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div style={{ background: '#fff', borderRadius: 10, padding: 14, border: '1px solid #eee' }}>
+        <AggregatedTable
+          data={filteredAgg}
+          sortCol={sortCol}
+          sortDir={sortDir}
+          setSortCol={setSortCol}
+          setSortDir={setSortDir}
+          tableSearch={tableSearch}
+          setTableSearch={setTableSearch}
+        />
+        <div style={{ background: '#fff', borderRadius: 10, padding: '8px 4px', border: '1px solid #eee', minWidth: 0 }}>
           <h3 style={{ margin: 0 }}>Preview (first 200 rows)</h3>
-          <div style={{ marginTop: 12, maxHeight: 520, overflow: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ marginTop: 8, maxHeight: 520, overflow: 'auto', minWidth: 0 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: 14 }}>
+              <colgroup>
+                <col style={{ width: '38%' }} />
+                <col style={{ width: '22%' }} />
+                <col style={{ width: '22%' }} />
+                <col style={{ width: '18%' }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>Hostname / URL</th>
-                  <th>Registered</th>
-                  <th>Category</th>
-                  <th>Count</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'left', whiteSpace: 'nowrap' }}>Hostname / URL</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'left', whiteSpace: 'nowrap' }}>Registered</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'left', whiteSpace: 'nowrap' }}>Category</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'right', whiteSpace: 'nowrap' }}>Count</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPreview.map((r, i) => (
                   <tr key={i}>
-                    <td>{r.host}</td>
-                    <td>{r.reg}</td>
-                    <td>{r.cat}</td>
-                    <td>{r.count}</td>
+                    <td style={{ padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.host}</td>
+                    <td style={{ padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reg}</td>
+                    <td style={{ padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.cat}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.count}</td>
                   </tr>
                 ))}
               </tbody>
@@ -304,6 +247,24 @@ export default function DnsCsvAnalyzer() {
           </div>
         </div>
       </div>
+      <EditFiltersModal
+        show={showModal}
+        onClose={() => setShowModal(false)}
+        editPrefs={editPrefs}
+        setEditPrefs={setEditPrefs}
+        onSave={() => {
+          const newPrefs = {
+            phishKeys: splitList(editPrefs.phishKeys),
+            phishTlds: splitList(editPrefs.phishTlds),
+            adultKeys: splitList(editPrefs.adultKeys),
+            adultTlds: splitList(editPrefs.adultTlds),
+            infraKeys: splitList(editPrefs.infraKeys),
+          };
+          setPrefs(newPrefs);
+          setShowModal(false);
+          if (rows.length) parseCsv(rows.map(r => [r.raw, r.host, r.reg, r.cat, r.count].join(',')).join('\n'));
+        }}
+      />
     </div>
   );
 }
